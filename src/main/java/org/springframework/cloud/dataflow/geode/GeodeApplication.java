@@ -44,7 +44,7 @@ public class GeodeApplication {
                 new ModuleCoordinates.Builder()
                         .setGroupId("org.springframework.cloud.stream.module")
                         .setArtifactId(String.format("%s-%s", name, type))
-                        .setVersion("1.0.0.M1")
+                        .setVersion("1.0.0.BUILD-SNAPSHOT")
                         .build());
         ModuleDeploymentId id = ModuleDeploymentId.fromModuleDefinition(moduleDefinition);
 

@@ -1,5 +1,7 @@
 package org.springframework.cloud.dataflow.geode;
 
+import java.util.Properties;
+
 import com.gemstone.gemfire.cache.Cache;
 import com.gemstone.gemfire.cache.CacheFactory;
 import com.gemstone.gemfire.cache.Region;
@@ -19,13 +21,21 @@ public class GeodeApplication {
 
     private static final Logger logger = LoggerFactory.getLogger(GeodeApplication.class);
 
-    public static void main(String[] args) {
-        Cache cache = new CacheFactory().create();
+    public static void main(String[] args) throws InterruptedException {
+        Properties properties = new Properties();
+        // locator must be launched externally
+//        properties.put("start-locator", "localhost[7777]");
+        properties.put("locators", "localhost[7777]");
+        properties.put("log-level", "warning");
+        Cache cache = new CacheFactory(properties).create();
         RegionFactory<ModuleDeploymentId, ModuleDeploymentRequest> factory =
                 cache.createRegionFactory();
         factory.addCacheListener(new ModuleDeploymentCacheListener());
         Region<ModuleDeploymentId, ModuleDeploymentRequest> region = factory.create("module-deployments");
         logger.info("Created region {}", region);
+
+        logger.info("launching modules in 10 seconds...");
+        Thread.sleep(10000);
 
         launchModule(region, "tt", "log", "sink");
         launchModule(region, "tt", "time", "source");
@@ -38,6 +48,7 @@ public class GeodeApplication {
         ModuleDefinition moduleDefinition = new ModuleDefinition.Builder()
                 .setName(name)
                 .setGroup(group)
+                .setParameter("spring.cloud.stream.bindings.input", "output")
                 .build();
         ModuleDeploymentRequest request = new ModuleDeploymentRequest(
                 moduleDefinition,
@@ -46,6 +57,7 @@ public class GeodeApplication {
                         .setArtifactId(String.format("%s-%s", name, type))
                         .setVersion("1.0.0.BUILD-SNAPSHOT")
                         .build());
+
         ModuleDeploymentId id = ModuleDeploymentId.fromModuleDefinition(moduleDefinition);
 
         region.put(id, request);

@@ -16,18 +16,29 @@
 
 package org.springframework.cloud.dataflow.geode.binder;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 
 import com.gemstone.gemfire.cache.Cache;
 import com.gemstone.gemfire.cache.CacheFactory;
 import com.gemstone.gemfire.cache.Region;
 import com.gemstone.gemfire.cache.RegionFactory;
+import com.gemstone.gemfire.cache.RegionShortcut;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.springframework.cloud.stream.binder.MessageChannelBinderSupport;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
+import org.springframework.messaging.MessageHandler;
+import org.springframework.messaging.MessagingException;
+import org.springframework.messaging.SubscribableChannel;
+import org.springframework.util.Assert;
 
 /**
  * @author Patrick Peralta
@@ -39,17 +50,20 @@ public class GeodeMessageChannelBinder extends MessageChannelBinderSupport {
 		logger.warn("GeodeMessageChannelBinder");
 	}
 
-	private Region<String, Message<?>> createMessageRegion(String name)  {
-		Cache cache = new CacheFactory().create();
-		RegionFactory<String, Message<?>> factory =
-				cache.createRegionFactory();
+	private Region<Long, Message<?>> createMessageRegion(String name)  {
+		Properties properties = new Properties();
+		properties.put("locators", "localhost[7777]");
+		properties.put("log-level", "warning");
+		Cache cache = new CacheFactory(properties).create();
+		RegionFactory<Long, Message<?>> factory =
+				cache.createRegionFactory(RegionShortcut.PARTITION);
 		return factory.create(name + "-messages");
 	}
 
 	@Override
 	public void bindConsumer(String name, MessageChannel inboundBindTarget, Properties properties) {
-		logger.warn("bindConsumer");
-		createMessageRegion(name);
+		logger.warn("bindConsumer({})", name);
+		Executors.newSingleThreadExecutor().submit(new QueueReader(createMessageRegion(name), inboundBindTarget));
 	}
 
 	@Override
@@ -59,7 +73,10 @@ public class GeodeMessageChannelBinder extends MessageChannelBinderSupport {
 
 	@Override
 	public void bindProducer(String name, MessageChannel outboundBindTarget, Properties properties) {
-		logger.warn("bindProducer");
+		logger.warn("bindProducer({})", name);
+		Assert.isInstanceOf(SubscribableChannel.class, outboundBindTarget);
+
+		((SubscribableChannel) outboundBindTarget).subscribe(new SendingHandler(createMessageRegion(name)));
 	}
 
 	@Override
@@ -75,5 +92,59 @@ public class GeodeMessageChannelBinder extends MessageChannelBinderSupport {
 	@Override
 	public void bindReplier(String name, MessageChannel requests, MessageChannel replies, Properties properties) {
 		logger.warn("bindReplier");
+	}
+
+	private static class QueueReader implements Runnable {
+
+		private final Region<Long, Message<?>> messageRegion;
+
+		private final MessageChannel messageChannel;
+
+		public QueueReader(Region<Long, Message<?>> messageRegion, MessageChannel messageChannel) {
+			this.messageRegion = messageRegion;
+			this.messageChannel = messageChannel;
+		}
+
+		@Override
+		public void run() {
+			while (true) {
+				try {
+					List<Long> keys = new ArrayList<>(messageRegion.keySet());
+					logger.debug("fetched {} messages", keys.size());
+					Collections.sort(keys);
+					Map<Long, Message<?>> messages = messageRegion.getAll(keys);
+					for (Long key : keys) {
+						Message<?> message = messages.get(key);
+						logger.debug("QueueReader({})", message);
+						messageChannel.send(message);
+					}
+					// todo: if message processing fails, the messages should
+					// remain in the region
+					messageRegion.removeAll(keys);
+
+					Thread.sleep(1000);
+				}
+				catch (InterruptedException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+	}
+
+	private static class SendingHandler implements MessageHandler {
+
+		private final Region<Long, Message<?>> messageRegion;
+
+		private final AtomicLong sequence = new AtomicLong();
+
+		public SendingHandler(Region<Long, Message<?>> messageRegion) {
+			this.messageRegion = messageRegion;
+		}
+
+		@Override
+		public void handleMessage(Message<?> message) throws MessagingException {
+			logger.debug("publishing message {}", message);
+			messageRegion.put(sequence.getAndIncrement(), message);
+		}
 	}
 }

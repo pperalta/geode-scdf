@@ -6,6 +6,7 @@ import com.gemstone.gemfire.cache.Cache;
 import com.gemstone.gemfire.cache.CacheFactory;
 import com.gemstone.gemfire.cache.Region;
 import com.gemstone.gemfire.cache.RegionFactory;
+import com.gemstone.gemfire.cache.RegionShortcut;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,16 +30,16 @@ public class GeodeApplication {
         properties.put("log-level", "warning");
         Cache cache = new CacheFactory(properties).create();
         RegionFactory<ModuleDeploymentId, ModuleDeploymentRequest> factory =
-                cache.createRegionFactory();
+                cache.createRegionFactory(RegionShortcut.REPLICATE);
         factory.addCacheListener(new ModuleDeploymentCacheListener());
         Region<ModuleDeploymentId, ModuleDeploymentRequest> region = factory.create("module-deployments");
         logger.info("Created region {}", region);
 
-        logger.info("launching modules in 10 seconds...");
-        Thread.sleep(10000);
-
-        launchModule(region, "tt", "log", "sink");
-        launchModule(region, "tt", "time", "source");
+//        logger.info("launching modules in 10 seconds...");
+//        Thread.sleep(10000);
+//
+//        launchModule(region, "tt", "log", "sink");
+//        launchModule(region, "tt", "time", "source");
 
         SpringApplication.run(GeodeApplication.class, args);
     }

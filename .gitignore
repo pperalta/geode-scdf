@@ -1,3 +1,6 @@
 *.iml
 target
 .idea
+locator*.dat
+locator*.log
+

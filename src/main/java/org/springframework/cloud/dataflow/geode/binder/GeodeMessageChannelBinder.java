@@ -29,6 +29,7 @@ import com.gemstone.gemfire.cache.CacheFactory;
 import com.gemstone.gemfire.cache.Region;
 import com.gemstone.gemfire.cache.RegionFactory;
 import com.gemstone.gemfire.cache.RegionShortcut;
+import com.gemstone.gemfire.cache.partition.PartitionRegionHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -107,12 +108,15 @@ public class GeodeMessageChannelBinder extends MessageChannelBinderSupport {
 
 		@Override
 		public void run() {
+			Region<Long, Message<?>> localMessageRegion =
+					PartitionRegionHelper.getLocalData(this.messageRegion);
+
 			while (true) {
 				try {
-					List<Long> keys = new ArrayList<>(messageRegion.keySet());
+					List<Long> keys = new ArrayList<>(localMessageRegion.keySet());
 					logger.debug("fetched {} messages", keys.size());
 					Collections.sort(keys);
-					Map<Long, Message<?>> messages = messageRegion.getAll(keys);
+					Map<Long, Message<?>> messages = localMessageRegion.getAll(keys);
 					for (Long key : keys) {
 						Message<?> message = messages.get(key);
 						logger.debug("QueueReader({})", message);
@@ -120,7 +124,7 @@ public class GeodeMessageChannelBinder extends MessageChannelBinderSupport {
 					}
 					// todo: if message processing fails, the messages should
 					// remain in the region
-					messageRegion.removeAll(keys);
+					localMessageRegion.removeAll(keys);
 
 					Thread.sleep(1000);
 				}

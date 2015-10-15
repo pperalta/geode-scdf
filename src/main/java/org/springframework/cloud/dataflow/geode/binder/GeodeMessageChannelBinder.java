@@ -90,8 +90,8 @@ public class GeodeMessageChannelBinder extends MessageChannelBinderSupport {
 	 * @param name name of the message region
 	 * @return region for consuming messages
 	 */
-	private Region<Long, Message<?>> createConsumerMessageRegion(String name)  {
-		RegionFactory<Long, Message<?>> factory = this.cache.createRegionFactory(RegionShortcut.PARTITION);
+	private Region<MessageKey, Message<?>> createConsumerMessageRegion(String name)  {
+		RegionFactory<MessageKey, Message<?>> factory = this.cache.createRegionFactory(RegionShortcut.PARTITION);
 		factory.addCacheListener(messageListener);
 		return factory.create(name + MESSAGES_POSTFIX);
 	}
@@ -104,8 +104,8 @@ public class GeodeMessageChannelBinder extends MessageChannelBinderSupport {
 	 * @param name name of the message region
 	 * @return region for producing messages
 	 */
-	private Region<Long, Message<?>> createProducerMessageRegion(String name) {
-		RegionFactory<Long, Message<?>> factory = this.cache.createRegionFactory(RegionShortcut.PARTITION_PROXY);
+	private Region<MessageKey, Message<?>> createProducerMessageRegion(String name) {
+		RegionFactory<MessageKey, Message<?>> factory = this.cache.createRegionFactory(RegionShortcut.PARTITION_PROXY);
 		return factory.create(name + MESSAGES_POSTFIX);
 	}
 
@@ -152,13 +152,13 @@ public class GeodeMessageChannelBinder extends MessageChannelBinderSupport {
 	 * {@link Object#notifyAll() notifies} itself when a new entry is added
 	 * to the region it is registered for.
 	 */
-	private static class MessageListener extends CacheListenerAdapter<Long, Message<?>> {
+	private static class MessageListener extends CacheListenerAdapter<MessageKey, Message<?>> {
 
 		public MessageListener() {
 		}
 
 		@Override
-		public synchronized void afterCreate(EntryEvent<Long, Message<?>> event) {
+		public synchronized void afterCreate(EntryEvent<MessageKey, Message<?>> event) {
 			this.notifyAll();
 		}
 	}
@@ -170,13 +170,13 @@ public class GeodeMessageChannelBinder extends MessageChannelBinderSupport {
 	 */
 	private static class QueueReader implements Runnable {
 
-		private final Region<Long, Message<?>> messageRegion;
+		private final Region<MessageKey, Message<?>> messageRegion;
 
 		private final MessageChannel messageChannel;
 
 		private final MessageListener messageListener;
 
-		public QueueReader(Region<Long, Message<?>> messageRegion,
+		public QueueReader(Region<MessageKey, Message<?>> messageRegion,
 				MessageChannel messageChannel, MessageListener messageListener) {
 			this.messageRegion = messageRegion;
 			this.messageChannel = messageChannel;
@@ -186,19 +186,19 @@ public class GeodeMessageChannelBinder extends MessageChannelBinderSupport {
 		@Override
 		public void run() {
 			// only messages that are present in this JVM will be processed
-			Region<Long, Message<?>> localMessageRegion =
+			Region<MessageKey, Message<?>> localMessageRegion =
 					PartitionRegionHelper.getLocalData(this.messageRegion);
 
 			while (true) {
 				try {
-					List<Long> keys = new ArrayList<>(localMessageRegion.keySet());
+					List<MessageKey> keys = new ArrayList<>(localMessageRegion.keySet());
 					logger.debug("Fetched {} messages", keys.size());
 
 					if (!keys.isEmpty()) {
 						Collections.sort(keys);
-						List<Long> errorKeys = null;
-						Map<Long, Message<?>> messages = localMessageRegion.getAll(keys);
-						for (Long key : keys) {
+						List<MessageKey> errorKeys = null;
+						Map<MessageKey, Message<?>> messages = localMessageRegion.getAll(keys);
+						for (MessageKey key : keys) {
 							Message<?> message = messages.get(key);
 							logger.debug("QueueReader({})", message);
 							try {
@@ -222,7 +222,7 @@ public class GeodeMessageChannelBinder extends MessageChannelBinderSupport {
 					}
 
 					synchronized (this.messageListener) {
-						this.messageListener.wait(50);
+						this.messageListener.wait(500);
 					}
 				}
 				catch (InterruptedException e) {
@@ -239,20 +239,30 @@ public class GeodeMessageChannelBinder extends MessageChannelBinderSupport {
 	 * {@link MessageHandler} implementation that publishes messages
 	 * to a {@link Region}.
 	 */
-	private static class SendingHandler implements MessageHandler {
+	private class SendingHandler implements MessageHandler {
 
-		private final Region<Long, Message<?>> messageRegion;
+		private final Region<MessageKey, Message<?>> messageRegion;
 
 		private final AtomicLong sequence = new AtomicLong();
 
-		public SendingHandler(Region<Long, Message<?>> messageRegion) {
+		private final String memberId;
+
+		public SendingHandler(Region<MessageKey, Message<?>> messageRegion) {
 			this.messageRegion = messageRegion;
+			// the member id is in the following format:
+			//    '192.168.1.3(11484)<v6>:35110'
+			this.memberId = GeodeMessageChannelBinder.this.cache
+					.getDistributedSystem().getDistributedMember().getId();
 		}
 
 		@Override
 		public void handleMessage(Message<?> message) throws MessagingException {
 			logger.debug("publishing message {}", message);
-			this.messageRegion.putAll(Collections.singletonMap(sequence.getAndIncrement(), message));
+			this.messageRegion.putAll(Collections.singletonMap(generate(), message));
+		}
+
+		private MessageKey generate() {
+			return new MessageKey(sequence.getAndIncrement(), memberId);
 		}
 	}
 }
